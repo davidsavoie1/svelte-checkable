@@ -1,563 +1,418 @@
+import { derived } from "svelte/store";
 import * as s from "specma";
-import { derived, get, writable } from "svelte/store";
-import { alwaysTrue, PENDING, VALID } from "./constants";
-import {
-  checkCollType,
-  cleanResult,
-  composeValueAndPred,
-  identity,
-  typeOf,
-  union,
-} from "./helpers";
+import equal from "fast-deep-equal";
+import { defaultMessages, getMessage, setMessages } from "./config";
+import mapStore from "./mapStore";
+import stateStore from "./stateStore";
 
-const {
-  fromEntries,
-  getCollItem,
-  getDeclaredEntries,
-  getEntries,
-  getKeys,
-  getKeySpec,
-  getPred,
-  getSpread,
-  isColl,
-  isOpt,
-  setCollItem,
-} = s.helpers;
+const u = s.util;
 
-const defaultMessages = { isRequired: "is required" };
+const INACTIVE = { valid: true, inactive: true };
+const PENDING = { valid: null };
+const VALID = { valid: true };
 
-export default function checkable(spec, initialValue, options) {
-  const store = isColl(spec) ? collCheckable : predCheckable;
-  return store(spec, initialValue, options);
-}
+const isArray = (x) => Array.isArray(x);
+const isColl = (x) => typeof x === "object";
+const isInvalidResult = ({ valid }) => ![true, null].includes(valid);
+const noop = () => {};
 
-function collCheckable(
+function checkable(
   spec,
   initialValue,
   {
-    key: globalKey,
-    active: initiallyActive = true,
-    require: requirements,
+    key: ownKey,
+    path: ownPath = [],
+    active: initialActive = true,
+    context: initialContext,
     isRequired = false,
     messages = defaultMessages,
+    require: requirements,
+    toKeys = [],
+    // CALLBACKS
+    onChange = noop,
+    onDirty = noop,
+    onResult = noop,
+    register = noop,
   } = {}
 ) {
-  const spreadReq = getSpread(requirements);
-  const declaredReqEntries = getDeclaredEntries(requirements);
-  const requiredSpec = fromEntries(
-    typeOf(spec),
-    getEntries(spec).filter(([key]) => {
-      const subReq = declaredReqEntries.find(([k]) => k === key);
-      const isReq = subReq && subReq[1];
-      return !!isReq && !isOpt(isReq);
-    })
-  );
-
-  const initialComposedValue = composeValueAndPred(initialValue, spec);
-  const subCheckables = new Map();
-
-  let currActive = initiallyActive;
-  const activeByKeyStore = writable(new Map());
-  const activeStore = derived(activeByKeyStore, (activesMap) => {
-    const activeFlags = [...activesMap.values()];
-    if (activeFlags.length <= 0) return initiallyActive;
-
-    currActive = activeFlags.reduce((acc, flag) => {
-      if (acc !== flag) return null;
-      return acc || flag;
-    });
-    return currActive;
-  });
-
-  /* Container to put new collection value at once.
-   * Will update/create each `subCheckable`. Different than `ownCheckable.value`,
-   * because subscribing to this one would trigger an action each time
-   * a `subCheckable` updates its values. */
-  const newValueStore = writable(initialComposedValue);
-
-  /* `orderStore` and `childrenStore` work together to create ordered children. */
-  const orderStore = writable(getKeys(initialComposedValue));
-  const childrenStore = derived(orderStore, (orderedKeys) =>
-    fromEntries(
-      typeOf(spec),
-      orderedKeys
-        .filter((key) => subCheckables.has(key))
-        .map((key) => [key, subCheckables.get(key)])
-    )
-  );
-
-  /* Results are stored in a key-value Map for easy access and key type integrity */
-  const resultsStore = writable(new Map());
-  let currResult = undefined;
-
-  /* All subscriptions to inner stores will save unsubscribe handler here for global unsub.
-   * Keyed in a Map for easy specific unsubscribe. */
-  const unsubs = new Map();
-
-  /* All external subscriptions to the store will be saved here
-   * to update them and unsubscribe them when all done. */
-  const subscriptions = new Set();
-
-  /* Add a collection type check pred spec */
-  const pred = s.and(getPred(spec), checkCollType(typeOf(spec)));
-  const ownCheckable = predCheckable(pred, initialComposedValue, {
-    active: initiallyActive,
-    isRequired,
-    messages,
-  });
-
-  initSubscriptions();
-
-  function initSubscriptions() {
-    /* Track results changes. Recalculate global result
-     * and publish it to all subscribers if it has changed. */
-    unsubs.set(
-      resultsStore,
-      resultsStore.subscribe((results) => {
-        const result = analyseResults(results);
-
-        /* Republish only if result has changed */
-        if (result !== currResult) {
-          currResult = result;
-          subscriptions.forEach((publish) =>
-            publish(cleanResult(result, globalKey))
-          );
-        }
-      })
-    );
-
-    /* Track own predicate result to store it as the `undefined` key. */
-    unsubs.set(
-      ownCheckable.check,
-      ownCheckable.check.subscribe((ownResult) =>
-        resultsStore.update((prev) => prev.set(undefined, ownResult))
-      )
-    );
-
-    /* If subCheckables active flags converge to active or partially active (`null`),
-     * activate `ownCheckable`. */
-    unsubs.set(
-      activeStore,
-      activeStore.subscribe((isActive) =>
-        ownCheckable.active(isActive === false ? false : true)
-      )
-    );
-
-    /* Track a new value being set. */
-    unsubs.set(
-      newValueStore,
-      newValueStore.subscribe((newValue) => {
-        if (!newValue) return;
-        ownCheckable.value.reset(newValue);
-
-        const keys = getKeys(newValue);
-
-        /* Unregister all `subCheckables` not included in the value anymore. */
-        for (const key of subCheckables.keys()) {
-          if (!keys.includes(key)) unregisterSubCheckable(key);
-        }
-
-        /* Register (update or create) a `subCheckable` for each value key. */
-        getEntries(newValue).forEach(registerSubCheckable);
-
-        /* Reset keys order */
-        orderStore.set(keys);
-      })
-    );
+  /* Function used to derive children's key from their initial value.
+   * Defined the same way as a spec (including spread). */
+  const toKey = s.getPred(toKeys);
+  function getSubKey(key, value) {
+    if (!toKey) return key;
+    return toKey(u.get(key, value));
   }
 
-  function analyseResults(results) {
-    const entries = getEntries(results);
+  /* Wether or not the store has been (or will be on creation) validated at least once. */
+  const $active = stateStore(initialActive);
+  /* Own predicate result */
+  const $check = stateStore(INACTIVE);
+  /* Children are ordered subCheckables */
+  const $children = stateStore();
+  /* Own context */
+  const $context = stateStore(initialContext);
+  /* Indicates if node or any child has been activated. */
+  const $dirty = stateStore(false);
+  /* Global result, own and subCheckables' */
+  const $result = stateStore(INACTIVE);
+  /* `register` used as a callback will ensure that the parent will know
+   * about this value and setup a result slot for it. Will also remove the result slot
+   * when not subscribed anymore. */
+  const $value = stateStore(initialValue, register);
 
-    /* Return invalid entry as soon as detected */
-    const failedEntry = entries.find(([, res]) => res.valid === false);
-    if (failedEntry) return failedEntry[1];
+  const $subResults = mapStore();
+  const $subCheckables = mapStore();
 
-    /* If no invalid, but some entries still pending, return pending result. */
-    const pendingEntry = entries.find(([, res]) => res.valid === null);
-    if (pendingEntry) return PENDING;
+  /* Combined invalid results errors */
+  const $errors = derived([$check, $subResults], ([ownResult, resultsMap]) => {
+    return [ownResult, ...resultsMap.values()].reduce(
+      (acc, res) => (isInvalidResult(res) ? [...acc, res] : acc),
+      []
+    );
+  });
 
-    return VALID;
+  let validationId;
+
+  /* Analyse requirements */
+  const spreadReq = s.getSpread(requirements);
+  const declaredReq = new Map(
+    u
+      .entries(requirements)
+      .filter(([k, req]) => k !== "..." && !!req && !s.isOpt(req))
+  );
+
+  /* Initialize store with a reset */
+  reset();
+
+  /* FUNCTIONS */
+
+  /* Validate only if not already active */
+  function activate() {
+    onDirty();
+    if (!$active.get()) return validate();
+    return Promise.resolve($result.get());
   }
 
-  function registerSubCheckable([key, value]) {
-    if (subCheckables.has(key)) {
-      /* If subCheckable already exists, use it and set its value */
-      const subCheckable = subCheckables.get(key);
-      subCheckable.value.reset(value);
-    } else {
-      /* Otherwise, create a new one, register it and setup its subscriptions */
-      const spreadSpec = getSpread(spec);
+  /* Use parent callback to provide it with latest combined result from own and children */
+  function broadcastResult(res) {
+    const result = defaultTo(
+      analyseResults([$check.get(), ...Array.from($subResults.get().values())]),
+      res
+    );
+    const simplified = simplifyResult(result);
+    if (simplified !== $result.get()) {
+      $result.set(simplified);
+      onResult(simplified);
+    }
+    return simplified;
+  }
 
-      const subReq = getCollItem(key, requirements) || spreadReq;
-      const subSpec = getCollItem(key, spec) || spreadSpec || alwaysTrue;
-      const currActive = active();
+  /* Change own value and broadcast the change to ancestors so they update theirs.
+   * Revalidate if store is active. */
+  function change(value) {
+    if (equal(value, $value.get())) return;
 
-      const subCheckable = checkable(subSpec, value, {
-        key,
-        active: currActive === null ? initiallyActive : currActive,
-        require: subReq,
-        isRequired: !!getCollItem(key, requiredSpec),
-        messages,
-      });
-      subCheckables.set(key, subCheckable);
+    $value.set(value);
+    onChange(value);
+    if ($active.get()) validate();
+  }
 
-      /* Subscribe to value change */
-      unsubs.set(
-        subCheckable.value,
-        subCheckable.value.subscribe((subValue) => {
-          ownCheckable.value((prev) => setCollItem(key, subValue, prev));
-        })
-      );
+  /* Reset manual state stores (unless otherwise specified)
+   * then set the value with a complete subCheckables rebuild. */
+  function reset(
+    value = initialValue,
+    { active: resetActive = true, context: resetContext = false } = {}
+  ) {
+    if (resetActive) $active.reset();
+    if (resetContext) $context.reset();
 
-      /* Subscribe to results change */
-      unsubs.set(
-        subCheckable.check,
-        subCheckable.check.subscribe((subRes) => {
-          resultsStore.update((prev) => prev.set(key, subRes));
-        })
-      );
+    $result.set(INACTIVE);
+    if (isRequired) register();
+    set(value, { broadcast: false, rebuild: true });
+    $dirty.set(false);
+  }
 
-      /* Subscribe to active change */
-      unsubs.set(
-        subCheckable.active,
-        subCheckable.active.subscribe((subActive) => {
-          activeByKeyStore.update((prev) => prev.set(key, subActive));
+  /* Set a value for the store and update both children and ancestors.
+   * If spec is a collection one, create all subCheckables
+   * or update them if they exist and rebuild is not requested. */
+  function set(value, { broadcast = true, rebuild = false } = {}) {
+    if (!rebuild && equal(value, $value.get())) return;
+
+    $value.set(value);
+    if (broadcast) onChange(value);
+
+    if (isColl(spec)) {
+      updateSubCheckables();
+      updateChildren(value);
+    }
+
+    /* If active, validate, otherwise, set initial own result as INACTIVE. */
+    $active.get() ? validate() : $check.set(INACTIVE);
+
+    // SUB FUNCTIONS
+    function updateSubCheckables() {
+      const allKeys = combineKeys(value, spec);
+      $subCheckables.update(
+        allKeys.map((key) => {
+          /* If a `getKey` function is provided, it will be used on the initial value to associate
+           * the child's key so that integrity can be preserved in a keyed `{#each}` */
+          const subKey = getSubKey(key, value);
+          const subSpec = u.get(key, spec) || s.getSpread(spec);
+          const subToKeys = u.get(key, toKeys) || s.getSpread(toKeys);
+
+          /* If value is supposed to be a collection (as per the spec),
+           * but its value is undefined, return an empty instance of spec type. */
+          const subVal = defaultTo(emptyValue(subSpec), u.get(key, value));
+
+          return [
+            subKey,
+            (prev) => {
+              /* If no previous store for subKey or if rebuilding entirely */
+              if (rebuild || !prev) {
+                return checkable(subSpec, subVal, {
+                  key: subKey,
+                  path: u.mergePaths(ownPath, key),
+                  active: $active.get(),
+                  isRequired: declaredReq.get(key),
+                  messages,
+                  require: defaultTo(spreadReq, u.get(key, requirements)),
+                  toKeys: subToKeys,
+                  /* A subCheckable calling `onChange` will trigger a chain reaction
+                   * where each ancestor will update its value and validate if active. */
+                  onChange(newSubVal) {
+                    const currValue = $value.get();
+                    let keyToChange = subKey;
+                    if (toKey) {
+                      const entries = u.entries(currValue);
+                      const entry =
+                        entries.find(([, v]) => toKey(v) === subKey) || [];
+                      keyToChange = entry[0];
+                    }
+                    const newVal = u.set(keyToChange, newSubVal, $value.get());
+                    change(newVal);
+                  },
+                  /* A subCheckable calling `onDirty` will trigger a chain reaction
+                   * where each ancestor willalso get dirty. */
+                  onDirty() {
+                    $dirty.set(true);
+                    onDirty();
+                  },
+                  /* A subCheckable can call `onResult` to inform its parent
+                   * that its global result (its own combined with its children's) has changed.
+                   * Will trigger a chain reaction for all ancestors. */
+                  onResult(subResult) {
+                    $subResults.setOne(subKey, subResult);
+                    broadcastResult();
+                  },
+                  /* Will be used as the callback to subCheckable's value store.
+                   * Will be called on first subscription only.
+                   * Returned function will be called after last unsubscribe. */
+                  register() {
+                    if (!$subResults.get().has(subKey)) {
+                      $subResults.setOne(subKey, INACTIVE);
+                      register();
+                    }
+                    return () => $subResults.removeOne(subKey);
+                  },
+                });
+              }
+
+              /* If reusing previous store, set its value, but do not
+               * have it broadcast its value change since parent initiated it. */
+              prev.set(subVal, { broadcast: false });
+              return prev;
+            },
+          ];
         })
       );
     }
   }
 
-  function unregisterSubCheckable(key) {
-    const subCheckable = subCheckables.get(key);
+  /* Set a context that will be passed as a second argument to predicate specs. */
+  function setContext(context, activate = false) {
+    $context.set(context);
+    if (activate || $active.get()) validate();
+  }
 
-    /* Unsubscribe from result, value and active changes */
-    [
-      unsubs.get(subCheckable.value),
-      unsubs.get(subCheckable.check),
-      unsubs.get(subCheckable.active),
-    ].forEach((unsub) => unsub && unsub());
+  /* Set the context of the store and its descendants
+   * by specifying a context trie in the same manner as a spec.
+   * Own context is the return value of a function stored as the predicate. */
+  function setContextTrie(contextTrie, activate = false) {
+    const contextFn = s.getPred(contextTrie);
+    if (contextFn) setContext(contextFn(), activate);
 
-    [resultsStore, activeByKeyStore].forEach((store) =>
-      store.update((prev) => {
-        prev.delete(key);
-        return prev;
-      })
+    const spreadSubTrie = s.getSpread(contextTrie);
+    u.entries($subCheckables.get()).forEach(([key, subCheckable]) => {
+      const subTrie = u.get(key, contextTrie) || spreadSubTrie;
+      if (!subTrie) return;
+      subCheckable.setContextTrie(subTrie);
+    });
+  }
+
+  function update(fn, options) {
+    const newValue = fn($value.get());
+    set(newValue, options);
+  }
+
+  /* For each key, get the corresponding subCheckable.
+   * If a `childrenKey` is defined, it will be used to retrieve
+   * the appropriate one. Return children in the same collection
+   * shape as the spec. */
+  function updateChildren(value) {
+    const subCheckables = $subCheckables.get();
+    const allKeys = combineKeys(value, spec);
+    $children.set(
+      allKeys.reduce((acc, key) => {
+        const child = subCheckables.get(getSubKey(key, value));
+        return child ? u.set(key, child, acc) : acc;
+      }, emptyValue(spec))
     );
-    subCheckables.delete(key);
   }
 
-  /* `active` us a getter/setter function, but also acts as a Svelte store
-   * by exposing at least a `subscribe` method. */
-  function active() {
-    if (arguments.length <= 0) return currActive;
-
-    const nowActive = !!arguments[0];
-    subCheckables.forEach((subCheckable) => subCheckable.active(nowActive));
-  }
-  active.subscribe = activeStore.subscribe;
-  active.set = active;
-  active.toggle = () => active(!active());
-
-  const check = {
-    subscribe(publish) {
-      publish(currResult);
-      subscriptions.add(publish);
-
-      return () => {
-        if (subscriptions.has(publish)) subscriptions.delete(publish);
-        if (subscriptions.size <= 0) unsubs.forEach((unsub) => unsub());
-      };
-    },
-  };
-
-  function children() {
-    return get(childrenStore);
-  }
-  children.subscribe = childrenStore.subscribe;
-
-  function reorder(newOrder) {
-    const currValue = ownCheckable.value();
-    const valueKeys = getKeys(currValue);
-    const filteredNewOrder = newOrder.filter((key) => valueKeys.includes(key));
-    const orderedKeys = union(filteredNewOrder, valueKeys);
-
-    const newValue = fromEntries(
-      typeOf(spec),
-      orderedKeys.map((key) => [key, subCheckables.get(key).value()])
-    );
-
-    ownCheckable.value.reset(newValue, { resetActive: false });
-    orderStore.set(orderedKeys);
-  }
-
-  /* If store is not active, activate it so that validation occurs.
-   * Return a promise that will resolve when valid is not `null`. */
+  /* Validate will always return a promise, so that it can be used
+   * externally to wait for validation to complete. */
   function validate() {
-    if (!active()) active(true);
-    return new Promise((resolve) => {
-      let unsub;
-      unsub = check.subscribe(({ valid }) => {
-        if (valid === null) return;
-        resolve(valid);
-        unsub && unsub();
-      });
-    });
-  }
+    function enhanceResult(res) {
+      return isInvalidResult(res) ? { ...res, path: ownPath } : res;
+    }
 
-  function value() {
-    if (arguments.length <= 0) return ownCheckable.value(); // Getter
-
-    const arg = arguments[0];
-    const newValue =
-      typeOf(arg) === "function" ? arg(ownCheckable.value()) : arg;
-    const composed = composeValueAndPred(newValue, spec);
-    newValueStore.set(composed); // Setter
-  }
-  value.subscribe = ownCheckable.value.subscribe;
-  value.reset = (newValue = initialValue, { resetActive = true } = {}) => {
-    value(newValue);
-    resetActive && active(initiallyActive);
-  };
-  value.set = value;
-  value.update = value;
-
-  return {
-    active,
-    check,
-    children,
-    context: ownCheckable.context,
-    isRequired,
-    key: globalKey,
-    reorder,
-    reset: value.reset,
-    set: value.set,
-    spec,
-    subscribe: value.subscribe,
-    update: value.update,
-    validate,
-    value,
-  };
-}
-
-// === predCheckable ===
-
-function predCheckable(
-  spec,
-  initialValue,
-  {
-    key: globalKey,
-    active: initiallyActive = true,
-    isRequired = false,
-    messages = defaultMessages,
-  } = {}
-) {
-  let currActive = initiallyActive;
-  /* Context can be assigned by `setContext` method. Applicable to pred spec only. */
-  let currContext;
-  let currInput;
-  let currResult;
-  let currValue = initialValue;
-
-  const lenses = { fromValue: identity, toValue: identity };
-  const inputStore = writable(lenses.fromValue(initialValue));
-  const activeStore = writable(initiallyActive);
-  const contextStore = writable();
-  const valueStore = writable(initialValue, (setValue) => {
-    const unsub = inputStore.subscribe((input) => {
-      currInput = input;
-      setValue(lenses.toValue(input));
-    });
-    return unsub;
-  });
-
-  const resultStore = derived(
-    [activeStore, valueStore, contextStore],
-    ([isActive, value, context], set) => {
-      /* Copy to local variables for direct access */
-      currActive = isActive;
-      currValue = value;
-      currContext = context;
-
-      if (!isActive) {
-        setResult(VALID);
-        return;
-      }
-
-      if (!isRequired && value === undefined) {
-        setResult(VALID);
-        return;
-      }
-
-      if (isRequired) {
-        if ([undefined, null, ""].includes(currValue)) {
-          setResult({
+    function validateOwn() {
+      const value = $value.get();
+      if (value === undefined) {
+        if (isRequired)
+          return {
             valid: false,
             reason: getMessage("isRequired", messages),
-          });
-          return;
+            path: ownPath,
+          };
+        return VALID;
+      }
+      return s.validate(s.getPred(spec), value, { context: $context.get() });
+    }
+
+    const currValidation = Date.now();
+    validationId = currValidation;
+
+    /* Validate and set own result synchronously */
+    const res = enhanceResult(validateOwn());
+    const simplified = simplifyResult(res);
+    $check.set(simplified);
+
+    /* A call to `validate` always activates the store. */
+    $active.set(true);
+
+    /* Resolve own pending result */
+    let currPromise = Promise.resolve(simplified);
+    if (res.valid === null) {
+      currPromise = res.promise;
+
+      res.promise.then((promised) => {
+        /* Newer calls to `validate` should prevent previous
+         * resolved promises to change the result. */
+        if (validationId === currValidation && $active.get()) {
+          $check.set(promised);
+          currPromise = null;
         }
-      }
-
-      let result = s.validate(spec, value, { context });
-
-      const keySpec = getKeySpec(spec);
-      if (keySpec) {
-        const keyResult = s.validate(keySpec, globalKey, { context });
-        result = interpretResults(result, keyResult);
-      }
-
-      setResult(result);
-
-      /* If result is async, set result after resolution only if value did not change in the meantime */
-      if (result.valid === null) {
-        result.promise.then((promisedResult) => {
-          if (value === currValue) setResult(promisedResult);
-        });
-      }
-
-      function interpretResults(...results) {
-        const firstInvalid = results.find((res) => res.valid === false);
-        if (firstInvalid) return firstInvalid;
-
-        if (results.every((res) => res.valid === true)) return VALID;
-
-        /* If there is any promise answer, return a global promise
-         * that will resolve at the first invalid answer
-         * or when all promises have resolved. */
-        const promise = new Promise((resolve) => {
-          const promises = results
-            .map((res) => res.promise)
-            .filter((x) => x && typeof x.then === "function");
-
-          promises.forEach((promise) =>
-            promise.then((res) => {
-              if (res.valid !== true) resolve(res);
-            })
-          );
-
-          Promise.all(promises).then((promisedResults) =>
-            resolve(interpretResults(...promisedResults))
-          );
-        });
-        return { ...PENDING, promise };
-      }
-
-      /* Set new result only if it changed. */
-      function setResult(result) {
-        const cleaned = cleanResult(result, globalKey);
-        if (cleaned === currResult) return;
-
-        currResult = cleaned;
-        set(cleaned);
-      }
-    }
-  );
-
-  /* `active` us a getter/setter function, but also acts as a Svelte store
-   * by exposing at least a `subscribe` method. */
-  function active() {
-    if (arguments.length <= 0) return currActive;
-    activeStore.set(!!arguments[0]);
-  }
-  active.subscribe = activeStore.subscribe;
-  active.set = activeStore.set;
-  active.toggle = () => activeStore.update((prev) => !prev);
-
-  function context() {
-    if (arguments.length <= 0) return currContext; // Getter
-    contextStore.set(arguments[0]); // Setter
-  }
-
-  /* Create an input store that can transform value to and from input.
-   * `input.lenses` function can  be used to define these transformation functions (lenses).
-   * Value is always updated by input change (see callback in `valueStore`),
-   * but input is updated only if `refresh` method is called (including when value is reset). */
-  function input() {
-    if (arguments.length <= 0) return currInput; // Getter
-
-    const arg = arguments[0];
-    currInput = typeOf(arg) === "function" ? arg(currInput) : arg;
-    inputStore.set(currInput); // Setter
-  }
-  input.refresh = (newValue) => input(lenses.fromValue(newValue));
-  input.lenses = function () {
-    if (arguments.length <= 0) return lenses;
-
-    const newLenses = arguments[0] || {};
-
-    if ("fromValue" in newLenses) {
-      lenses.fromValue = newLenses.fromValue || identity;
-      input(lenses.fromValue(value()));
-    }
-
-    if ("toValue" in newLenses) {
-      /* If `toValue` changes, update value with current transformed input. */
-      lenses.toValue = newLenses.toValue || identity;
-      value(lenses.toValue(currInput));
-    }
-  };
-  input.set = input;
-  input.subscribe = inputStore.subscribe;
-  input.update = input;
-
-  /* If store is not active, activate it so that validation occurs.
-   * Return a promise that will resolve when valid is not `null`. */
-  function validate() {
-    if (!active()) active(true);
-    return new Promise((resolve) => {
-      let unsub;
-      unsub = resultStore.subscribe(({ valid }) => {
-        if (valid === null) return;
-        resolve(valid);
-        unsub && unsub();
       });
-    });
-  }
+    }
 
-  /* `value` is a getter/setter function, but also acts as a Svelte store
-   * by exposing at least a `subscribe` method. */
-  function value() {
-    if (arguments.length <= 0) return currValue; // Getter
+    /* If some registered subCheckables are still inactive, validate them.
+     * Combine all results by racing for the first invalid. */
+    const subResults = $subResults.get();
+    const subPromises = Array.from($subCheckables.get().entries())
+      .filter(([key]) => subResults.has(key))
+      .map(([, subCheckable]) => subCheckable.activate());
 
-    const arg = arguments[0];
-    const setter =
-      typeOf(arg) === "function" ? valueStore.update : valueStore.set;
-    setter(arg); // Setter
+    const combinedPromise = resultsRace([currPromise, ...subPromises]).then(
+      (winner) => {
+        if (validationId !== currValidation) return $result.get();
+        return broadcastResult(enhanceResult(winner));
+      }
+    );
+    return combinedPromise;
   }
-  value.reset = (newValue, { resetActive = true } = {}) => {
-    value(newValue);
-    currValue = newValue;
-    input.refresh(newValue);
-    resetActive && active(initiallyActive);
-  };
-  value.subscribe = valueStore.subscribe;
-  value.set = value;
-  value.update = value;
 
   return {
-    active,
-    check: resultStore,
-    context,
-    key: globalKey,
-    input,
+    key: ownKey,
+    path: ownPath,
     isRequired,
-    reset: value.reset,
-    set: value.set,
     spec,
-    subscribe: value.subscribe,
-    update: value.update,
+    // STORES
+    active: readOnlyStore($active),
+    check: readOnlyStore($check),
+    children: readOnlyStore($children),
+    context: readOnlyStore($context),
+    dirty: readOnlyStore($dirty),
+    result: readOnlyStore($result),
+    errors: $errors, // Derived
+    get: $value.get,
+    subscribe: $value.subscribe, // $value is the main returned store
+    // METHODS
+    activate,
+    change,
+    reset,
+    set,
+    setContext,
+    setContextTrie,
+    update,
     validate,
-    value,
   };
-}
-
-function setMessages(messages) {
-  Object.assign(defaultMessages, messages);
-}
-
-function getMessage(key, messages) {
-  return messages[key] || defaultMessages[key];
 }
 
 checkable.setMessages = setMessages;
+
+export default checkable;
+
+// HELPERS
+
+function analyseResults(results = []) {
+  const firstInvalid = results.find(isInvalidResult);
+  if (firstInvalid) return firstInvalid;
+  if (results.some((r) => r.valid === null)) return PENDING;
+  return VALID;
+}
+
+function combineKeys(value, spec) {
+  return isArray(spec) ? u.keys(value) : uniqueKeys(value, spec);
+}
+
+function defaultTo(defaultValue, value) {
+  if ([undefined, null, NaN].includes(value)) return defaultValue;
+  return value;
+}
+
+function emptyValue(example) {
+  const empties = {
+    array: [],
+    map: new Map(),
+    object: {},
+  };
+  return empties[u.typeOf(example)];
+}
+
+function readOnlyStore(store) {
+  return { get: store.get, subscribe: store.subscribe };
+}
+
+function simplifyResult(res) {
+  if (res.valid === true) return res.inactive ? INACTIVE : VALID;
+  if (res.valid === null) return PENDING;
+  return res;
+}
+
+function resultsRace(resultPromises) {
+  return Promise.all(
+    resultPromises.map((promise) => {
+      return promise.then((promisedRes) => {
+        if (promisedRes.valid === true) return promisedRes;
+        throw promisedRes;
+      });
+    })
+  )
+    .then(() => ({ valid: true }))
+    .catch((result) => result);
+}
+
+function uniqueKeys(...colls) {
+  return Array.from(new Set(colls.flatMap(u.keys)));
+}
