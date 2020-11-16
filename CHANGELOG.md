@@ -4,6 +4,8 @@
 
 ### Break
 
+- Complete refactoring to get a working set of `checkable` stores.
+
 ### Grow
 
 ### Fix
