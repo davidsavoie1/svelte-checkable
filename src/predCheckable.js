@@ -24,7 +24,7 @@ export default function predCheckable(
   const active = writable(initialActive);
   const rootValue = writable(initialRootValue);
   const value = writable(initialValue);
-  let promise;
+  let promise = Promise.resolve(VALID);
 
   let validationId;
   const derivedFromStores = usesGetFrom

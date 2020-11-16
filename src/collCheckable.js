@@ -176,7 +176,8 @@ const typeOf = (obj) =>
   ({}.toString.call(obj).split(" ")[1].slice(0, -1).toLowerCase());
 
 function passFailAsync(result) {
-  return result.promise.then((promisedRes) => {
+  const promise = result.promise || Promise.resolve(result);
+  return promise.then((promisedRes) => {
     if (promisedRes.valid === true) return promisedRes;
     throw promisedRes;
   });
