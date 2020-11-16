@@ -127,7 +127,7 @@ export default function collCheckable(
 
     /* All valid */
     if (results.every((res) => res.valid === true)) {
-      return enhanceResult({ valid: true });
+      return enhanceResult(VALID);
     }
 
     /* Some pending */
@@ -184,7 +184,7 @@ function passFailAsync(result) {
 
 function resultsRace(results) {
   return Promise.all(results.map(passFailAsync))
-    .then(() => ({ valid: true }))
+    .then(() => VALID)
     .catch((result) => result);
 }
 
