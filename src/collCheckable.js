@@ -1,22 +1,12 @@
 import { tick } from "svelte";
 import { writable } from "svelte/store";
-import { and, getPred, getSpread, isOpt, util } from "specma";
+import { and, getMessage, getPred, getSpread, isOpt, util } from "specma";
 import collDerived from "./collDerived";
 import predCheckable from "./predCheckable";
 
 const { mergePaths } = util;
 
-/* MESSAGES */
-
-const defaultMessages = { isRequired: "is required" };
-
-function getMessage(key, messages) {
-  return messages[key] || defaultMessages[key];
-}
-
-export function setMessages(messages) {
-  Object.assign(defaultMessages, messages);
-}
+const VALID = { valid: true, promise: Promise.resolve({ valid: true }) };
 
 /* MAIN */
 
@@ -27,7 +17,7 @@ export default function collCheckable(
     active: initialActive = true,
     indexBy,
     key: ownKey,
-    messages = defaultMessages,
+    messages,
     path = [],
     required = false,
     rootValue: initialRootValue,
