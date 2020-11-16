@@ -35,7 +35,7 @@ export default function predCheckable(
     derivedFromStores,
     ([$active, $value, $rootValue], set) => {
       function publish(res) {
-        promise = res.promise;
+        promise = res.promise || Promise.resolve(res);
         set({ ...res, active: $active, activate });
       }
 
