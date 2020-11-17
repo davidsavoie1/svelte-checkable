@@ -16,6 +16,7 @@ export default function predCheckable(
     active: initialActive = true,
     key,
     path = [],
+    required = false,
     rootValue: initialRootValue,
   } = {}
 ) {
@@ -39,7 +40,7 @@ export default function predCheckable(
         set({ ...res, active: $active, activate });
       }
 
-      if (!$active) {
+      if (!$active || (!required && $value === undefined)) {
         return publish(VALID);
       }
 

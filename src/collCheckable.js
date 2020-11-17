@@ -73,7 +73,6 @@ export default function collCheckable(
       const subSpec = getSpec({
         key,
         spec,
-        value: subVal,
         messages,
         required: subRequired,
       });
@@ -199,10 +198,8 @@ function getSubRequired(key, required) {
   return get(key, required) || required["..."];
 }
 
-function getSpec({ key, spec, value, messages, required }) {
+function getSpec({ key, spec, messages, required }) {
   const req = isRequired(required);
-
-  if (value === undefined && !req) return alwaysTrue;
 
   const basicSpec = get(key, spec) || getSpread(spec) || alwaysTrue;
   if (!req) return basicSpec;
