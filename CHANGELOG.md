@@ -8,6 +8,18 @@
 
 ### Fix
 
+### Deprecate
+
+---
+
+## [2.0.1] - 2020-11-17
+
+### Break
+
+### Grow
+
+### Fix
+
 - Check for non required undefined values in `predCheckable`, not in `collCheckable`, as undefined value could eventually change, but spec would still be fixed to always true.
 
 ### Deprecate
