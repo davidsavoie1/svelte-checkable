@@ -5,6 +5,7 @@ import collDerived from "./collDerived";
 import predCheckable from "./predCheckable";
 
 const { mergePaths } = util;
+const isFunc = (x) => typeof x === "function";
 
 const VALID = { valid: true, promise: Promise.resolve({ valid: true }) };
 
@@ -194,8 +195,9 @@ function get(key, coll) {
 }
 
 function getSubRequired(key, required) {
-  if (typeof required !== "object") return required;
-  return get(key, required) || required["..."];
+  const req = isFunc(required) ? required() : required;
+  if (typeof req !== "object") return req;
+  return get(key, req) || req["..."];
 }
 
 function getSpec({ key, spec, messages, required }) {
@@ -209,9 +211,10 @@ function getSpec({ key, spec, messages, required }) {
   return and(reqSpec, basicSpec);
 }
 
-function isRequired(requirement) {
-  if (typeof requirement !== "object") return !!requirement;
-  return requirement && !isOpt(requirement);
+function isRequired(required) {
+  const req = isFunc(required) ? required() : required;
+  if (typeof req !== "object") return !!req;
+  return req && !isOpt(req);
 }
 
 function keys(coll, indexBy = (v, k) => k) {

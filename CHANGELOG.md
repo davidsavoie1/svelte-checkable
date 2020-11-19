@@ -6,6 +6,8 @@
 
 ### Grow
 
+- Allow defining `required` as functions so that they can be combined like specs.
+
 ### Fix
 
 ### Deprecate
