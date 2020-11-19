@@ -6,6 +6,18 @@
 
 ### Grow
 
+### Fix
+
+### Deprecate
+
+---
+
+## [2.0.2] - 2020-11-19
+
+### Break
+
+### Grow
+
 - Allow defining `required` as functions so that they can be combined like specs.
 
 ### Fix
