@@ -4,7 +4,11 @@
 
 ### Break
 
+- Remove default export;
+
 ### Grow
+
+- Add `submitable` store, that facilitates usage of `checkable` in forms;
 
 ### Fix
 
