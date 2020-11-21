@@ -1,15 +1,19 @@
 import { tick } from "svelte";
 import { writable } from "svelte/store";
-import { and, getMessage, getPred, getSpread, isOpt, util } from "specma";
+import { getPred, getSpread } from "specma";
+import { VALID } from "./constants";
 import collDerived from "./collDerived";
+import {
+  combineActives,
+  get,
+  getSpec,
+  getSubRequired,
+  keys,
+  mapOnMap,
+  mergePaths,
+  resultsRace,
+} from "./helpers";
 import predCheckable from "./predCheckable";
-
-const { mergePaths } = util;
-const isFunc = (x) => typeof x === "function";
-
-const VALID = { valid: true, promise: Promise.resolve({ valid: true }) };
-
-/* MAIN */
 
 export default function collCheckable(
   spec,
@@ -159,74 +163,4 @@ export default function collCheckable(
     set,
     subscribe: derived.subscribe,
   };
-}
-
-/* HELPERS */
-
-function alwaysTrue() {
-  return true;
-}
-
-function combineActives(actives = []) {
-  if (actives.length <= 0) return undefined;
-  return actives.reduce((a, b) => (a !== b ? undefined : b));
-}
-
-const typeOf = (obj) =>
-  ({}.toString.call(obj).split(" ")[1].slice(0, -1).toLowerCase());
-
-function passFailAsync(result) {
-  const promise = result.promise || Promise.resolve(result);
-  return promise.then((promisedRes) => {
-    if (promisedRes.valid === true) return promisedRes;
-    throw promisedRes;
-  });
-}
-
-function resultsRace(results) {
-  return Promise.all(results.map(passFailAsync))
-    .then(() => VALID)
-    .catch((result) => result);
-}
-
-function get(key, coll) {
-  if (typeOf(coll) === "map") return coll.get(key);
-  return typeof coll === "object" ? coll[key] : undefined;
-}
-
-function getSubRequired(key, required) {
-  const req = isFunc(required) ? required() : required;
-  if (typeof req !== "object") return req;
-  return get(key, req) || req["..."];
-}
-
-function getSpec({ key, spec, messages, required }) {
-  const req = isRequired(required);
-
-  const basicSpec = get(key, spec) || getSpread(spec) || alwaysTrue;
-  if (!req) return basicSpec;
-
-  const reqSpec = (x) =>
-    ![undefined, null, ""].includes(x) || getMessage("isRequired", messages);
-  return and(reqSpec, basicSpec);
-}
-
-function isRequired(required) {
-  const req = isFunc(required) ? required() : required;
-  if (typeof req !== "object") return !!req;
-  return req && !isOpt(req);
-}
-
-function keys(coll, indexBy = (v, k) => k) {
-  const fn = {
-    array: () => coll.map(indexBy),
-    map: () => [...coll.keys()],
-    object: () => Object.keys(coll),
-  }[typeOf(coll)];
-
-  return fn ? fn(coll) : [];
-}
-
-function mapOnMap(fn, map) {
-  return new Map([...map.entries()].map(([k, v]) => [k, fn(v)]));
 }
