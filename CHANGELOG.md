@@ -4,6 +4,18 @@
 
 ### Break
 
+### Grow
+
+### Fix
+
+### Deprecate
+
+---
+
+## [2.1.0] - 2020-11-20
+
+### Break
+
 - Remove default export;
 
 ### Grow
