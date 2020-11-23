@@ -1,6 +1,7 @@
 import { derived, writable } from "svelte/store";
 import { select } from "specma";
 import equals from "fast-deep-equal";
+import clone from "clone-deep";
 import checkable from "./checkable";
 
 const noop = () => {};
@@ -39,7 +40,7 @@ export default function submittable(
       _value = _initialValue;
 
       /* Must be copied to prevent direct reference in Svelte components */
-      onReset({ ..._initialValue });
+      onReset(clone(_initialValue));
       return _initialValue;
     },
 
