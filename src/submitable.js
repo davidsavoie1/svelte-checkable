@@ -66,7 +66,7 @@ export default function submittable(
 
     submit: async () => {
       submitting.set(true);
-      response.set({});
+      response.set();
       const res = await check.activate();
 
       let resp;

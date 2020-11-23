@@ -8,6 +8,8 @@
 
 ### Fix
 
+- Reset `response` to `undefined` (instead of `{}`) on each submit;
+
 ### Deprecate
 
 ---
