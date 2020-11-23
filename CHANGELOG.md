@@ -8,6 +8,18 @@
 
 ### Fix
 
+### Deprecate
+
+---
+
+## [2.1.1] - 2020-11-23
+
+### Break
+
+### Grow
+
+### Fix
+
 - Deep clone initial value (instead of a mere shallow copy) before passing it to `onReset` callback;
 
 ### Deprecate
