@@ -1,6 +1,18 @@
 # Changelog
 
-## [Unreleased]
+## [Unreleased] -
+
+### Break
+
+### Grow
+
+### Fix
+
+### Deprecate
+
+---
+
+## [2.1.2] - 2020-11-23
 
 ### Break
 
