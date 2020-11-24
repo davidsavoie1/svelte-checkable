@@ -8,6 +8,8 @@
 
 ### Fix
 
+- Use `reset` with initial value in `submitable`;
+
 ### Deprecate
 
 ---

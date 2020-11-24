@@ -17,8 +17,8 @@ export default function submittable(
     ...checkableOptions
   } = {}
 ) {
-  let _initialValue = select(selection, initialValue);
-  let _value = _initialValue;
+  let _initialValue;
+  let _value;
 
   const changed = writable(false);
   const response = writable(undefined);
@@ -26,23 +26,27 @@ export default function submittable(
   const check = checkable(spec, initialValue, { active, ...checkableOptions });
   const inactive = derived(check, ($check) => $check.active === false);
 
+  reset(initialValue);
+
+  function reset(newValue = _initialValue) {
+    _initialValue = select(selection, newValue);
+
+    changed.set(false);
+    check.activate(active);
+    response.set(undefined);
+    check.set(_initialValue);
+
+    _value = clone(_initialValue);
+
+    /* Must be copied to prevent direct reference in Svelte components */
+    onReset(_value);
+    return _initialValue;
+  }
+
   return {
     activate: check.activate,
 
-    reset: (newValue = _initialValue) => {
-      _initialValue = select(selection, newValue);
-
-      changed.set(false);
-      check.activate(active);
-      response.set(undefined);
-      check.set(_initialValue);
-
-      _value = _initialValue;
-
-      /* Must be copied to prevent direct reference in Svelte components */
-      onReset(clone(_initialValue));
-      return _initialValue;
-    },
+    reset,
 
     set(newValue) {
       const pruned = select(selection, newValue);
