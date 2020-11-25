@@ -28,12 +28,15 @@ export default function submittable(
 
   reset(initialValue);
 
-  function reset(newValue = _initialValue) {
+  function reset(
+    newValue = _initialValue,
+    { resetActive = true, resetResponse = true } = {}
+  ) {
     _initialValue = select(selection, newValue);
 
     changed.set(false);
-    check.activate(active);
-    response.set(undefined);
+    resetActive && check.activate(active);
+    resetResponse && response.set(undefined);
     check.set(_initialValue);
 
     _value = clone(_initialValue);

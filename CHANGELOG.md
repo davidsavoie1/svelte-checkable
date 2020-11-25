@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] -
+
+### Break
+
+### Grow
+
+- Add `resetActive` and `resetResponse` options to `submitable`'s `reset`;
+
+### Fix
+
+### Deprecate
+
+---
+
 ## [2.2.0] - 2020-11-24
 
 ### Break
