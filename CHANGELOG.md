@@ -7,6 +7,7 @@
 ### Grow
 
 - Add `resetActive` and `resetResponse` options to `submitable`'s `reset`;
+- Allow specifying an `afterSubmit` callback that receives the response and form methods;
 
 ### Fix
 

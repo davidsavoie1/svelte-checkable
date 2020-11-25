@@ -9,6 +9,7 @@ const noop = () => {};
 export default function submittable(
   initialValue,
   {
+    afterSubmit = noop,
     onReset = noop,
     spec,
     selection = false,
@@ -46,17 +47,19 @@ export default function submittable(
     return _initialValue;
   }
 
+  function set(newValue) {
+    const pruned = select(selection, newValue);
+    check.set(pruned);
+    changed.set(!equals(pruned, _initialValue));
+    _value = pruned;
+  }
+
+  const activate = check.activate;
+
   return {
-    activate: check.activate,
-
+    activate,
     reset,
-
-    set(newValue) {
-      const pruned = select(selection, newValue);
-      check.set(pruned);
-      changed.set(!equals(pruned, _initialValue));
-      _value = pruned;
-    },
+    set,
 
     status: derived(
       [changed, inactive, response, submitting],
@@ -80,6 +83,7 @@ export default function submittable(
       if (res.valid === true) {
         resp = await submit(_value);
         response.set(interpretResponse(resp));
+        afterSubmit(resp, { activate, reset, set });
       }
       submitting.set(false);
       return resp;
