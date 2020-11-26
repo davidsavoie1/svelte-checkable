@@ -29,6 +29,15 @@ export default function submittable(
 
   reset(initialValue);
 
+  function activate(bool) {
+    if (!bool) clearResponse();
+    check.activate(bool);
+  }
+
+  function clearResponse() {
+    response.set(undefined);
+  }
+
   function reset(
     newValue = _initialValue,
     { resetActive = true, resetResponse = true } = {}
@@ -53,8 +62,6 @@ export default function submittable(
     changed.set(!equals(pruned, _initialValue));
     _value = pruned;
   }
-
-  const activate = check.activate;
 
   return {
     activate,

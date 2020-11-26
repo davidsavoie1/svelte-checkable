@@ -1,5 +1,19 @@
 # Changelog
 
+## [UNRELEASED] -
+
+### Break
+
+### Grow
+
+### Fix
+
+- Clear response when deactivating;
+
+### Deprecate
+
+---
+
 ## [2.3.0] - 2020-11-25
 
 ### Break
