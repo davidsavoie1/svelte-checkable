@@ -46,7 +46,7 @@ export default function submittable(
 
     changed.set(false);
     resetActive && check.activate(active);
-    resetResponse && response.set(undefined);
+    resetResponse && clearResponse();
     check.set(_initialValue);
 
     _value = clone(_initialValue);
@@ -65,6 +65,7 @@ export default function submittable(
 
   return {
     activate,
+    clearResponse,
     reset,
     set,
 

@@ -6,6 +6,8 @@
 
 ### Grow
 
+- Expose `clearResponse` method;
+
 ### Fix
 
 - Clear response when deactivating;
