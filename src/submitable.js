@@ -31,7 +31,7 @@ export default function submittable(
 
   function activate(bool) {
     if (!bool) clearResponse();
-    check.activate(bool);
+    return check.activate(bool);
   }
 
   function clearResponse() {

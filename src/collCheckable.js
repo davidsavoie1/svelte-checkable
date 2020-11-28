@@ -113,7 +113,12 @@ export default function collCheckable(
       const children = $storesMap;
       children.activate = (key) => {
         const store = storesMap.get(key);
-        if (store) store.activate();
+        if (store) return store.activate();
+      };
+      children.submit = (key, submitFn) => {
+        children
+          .activate(key)
+          .then((res) => res.valid === true && submitFn(res));
       };
 
       const active = combineActives(results.map((res) => res.active));

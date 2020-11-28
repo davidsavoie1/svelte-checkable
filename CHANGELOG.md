@@ -1,5 +1,21 @@
 # Changelog
 
+## [UNRELEASED] -
+
+### Break
+
+### Grow
+
+- Expose a `submit` method on children and on `predCheckable` that activates the store (validation), then executes a function only if result is valid;
+
+### Fix
+
+- Return the activation promise when activating children or main `subscribable`;
+
+### Deprecate
+
+---
+
 ## [2.3.1] - 2020-11-26
 
 ### Break

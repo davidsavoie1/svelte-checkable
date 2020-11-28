@@ -70,10 +70,15 @@ export default function predCheckable(
     rootValue.set(newRootValue);
   }
 
+  function submit(submitFn) {
+    activate().then((res) => res.valid === true && submitFn());
+  }
+
   return {
     activate,
     key,
     set,
+    submit,
     subscribe: derivedResult.subscribe,
     update: value.update,
   };
