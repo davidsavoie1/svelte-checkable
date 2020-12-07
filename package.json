@@ -1,6 +1,6 @@
 {
   "name": "svelte-checkable",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Data validation Svelte store using Specma",
   "homepage": "https://github.com/davidsavoie1/svelte-checkable.git",
   "repository": {

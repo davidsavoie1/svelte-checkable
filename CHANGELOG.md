@@ -1,6 +1,6 @@
 # Changelog
 
-## [UNRELEASED] -
+## [2.3.3] - 2020-12-07
 
 ### Break
 
