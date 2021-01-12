@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.4] - 2021-01-12
+
+### Break
+
+### Grow
+
+### Fix
+
+- Update `specma` so that selection takes spread into account;
+
+### Deprecate
+
+---
+
 ## [2.3.3] - 2020-12-07
 
 ### Break
