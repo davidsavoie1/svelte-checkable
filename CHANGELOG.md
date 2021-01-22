@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.3.5] - 2021-01-22
+
+### Break
+
+### Grow
+
+- Update to Specma 2.3.5, allowing better selection definitions;
+
+### Fix
+
+### Deprecate
+
+---
+
 ## [2.3.4] - 2021-01-12
 
 ### Break
